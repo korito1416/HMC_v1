@@ -1,3 +1,4 @@
+
 #!/usr/bin/env python
 # coding: utf-8
 
@@ -165,8 +166,10 @@ class HMCSampler(Sampler):
         'symplectic_integrator':'verlet',
         'symplectic_integrator_stepsize':1e-2,
         'symplectic_integrator_num_steps':20,
-        'mass_matrix':1,
+        # 'mass_matrix':1,
         'constraint_test':None,
+        'mass_matrix_gamma':np.ones(25),
+        'mass_matrix_theta':np.ones(25),
     }
 
     def __init__(self, configs=_DEF_CONFIGURATIONS):
@@ -318,7 +321,9 @@ class HMCSampler(Sampler):
             `_MASS_MATRIX` and `_MASS_MATRIX_INV`, `_MASS_MATRIX_SQRT`  which should never be updated manually
         """
         size = self._CONFIGURATIONS['size']
-        mass_matrix = self._CONFIGURATIONS['mass_matrix']
+        # mass_matrix = self._CONFIGURATIONS['mass_matrix']
+        mass_matrix_gamma = self._CONFIGURATIONS['mass_matrix_gamma']
+        mass_matrix_theta = self._CONFIGURATIONS['mass_matrix_theta']
 
 #         if isinstance(mass_matrix, numbers.Number):
 # #             if mass_matrix <= 0:
@@ -326,7 +331,21 @@ class HMCSampler(Sampler):
 # #                 raise ValueError
 
         if sparse is not None:
-            mass_matrix = sparse.diags(np.block([[mass_matrix[0]*np.ones(int(size/2)),mass_matrix[1]*np.ones(int(size/2))]]),[0])
+            # mass_matrix = sparse.diags(np.block([[mass_matrix[0]*np.ones(int(size/2)),mass_matrix[1]*np.ones(int(size/2))]]),[0])
+            # first_block = mass_matrix[0]*np.ones(int(size/2))
+            # second_block = mass_matrix[1]*np.ones(int(size/2))
+
+            # modify the first two elements of the first block
+            # mass_matrix_theta[0] *= 100
+            # mass_matrix_theta[1] *= 100
+            # mass_matrix_theta[2] *= 10
+            # mass_matrix_theta[18] *= 10
+            # print("scales theta")
+            # mass_matrix = sparse.diags(np.block([[first_block,second_block]]),[0])
+
+            print(np.block([[mass_matrix_theta,mass_matrix_gamma]]))
+            mass_matrix = sparse.diags(np.block([[mass_matrix_theta,mass_matrix_gamma]]),[0])
+
         else:
             mass_matrix = np.array([[mass_matrix]])
 
@@ -630,7 +649,7 @@ class HMCSampler(Sampler):
             assert constraint_test is None, "`constraint_test` must be either a callable of None!"
 
         ## Mass matrix (covariance of the momentum)
-        mass_matrix = aggr_configs['mass_matrix']
+        # mass_matrix = aggr_configs['mass_matrix']
 
 #         if isinstance(mass_matrix, numbers.Number):
 #             if mass_matrix <= 0:
@@ -912,18 +931,16 @@ class HMCSampler(Sampler):
 
         for _ in range(num_steps):
             #
-            print("current state",current_state)
-            print("current momentum",current_momentum)
             if re.match(r"\A(verlet|leapfrog)\Z", symplectic_integrator, re.IGNORECASE):
 
                 # Update state
                 proposed_state = current_state + (0.5*h) * self.mass_matrix_inv_matvec(current_momentum)
-                print(_,"1: proposed state", proposed_state)
+                # print("1: proposed state", proposed_state)
 
                 # Update momentum
                 grad = self.potential_energy_grad(proposed_state)
                 proposed_momentum = current_momentum - h * grad
-                print(_,"<: proposed momentum", proposed_momentum)
+                # print("<: proposed momentum", proposed_momentum)
 
                 # Update state again
                 proposed_state += (0.5*h) * self.mass_matrix_inv_matvec(proposed_momentum)
@@ -1061,6 +1078,10 @@ class HMCSampler(Sampler):
             # Here, we evaluate the kernel of the posterior at both the current and the proposed state proposed_state)
             current_energy  = self.total_Hamiltonian(momentum=current_momentum, state=current_state)
             constraint_violated = False
+
+            # print("proposed_momentum",proposed_momentum,"current_momentum",current_momentum)
+            # print("proposed_state",proposed_state,"current_state",current_state)
+
             if constraint_test is not None:
                 if not constraint_test(proposed_state): constraint_violated = True
 
@@ -1074,9 +1095,12 @@ class HMCSampler(Sampler):
 
                 energy_loss = proposal_energy - current_energy
                 
-#                 print("proposed_momentum",proposed_momentum)
-#                 print("energy_loss",energy_loss,"proposal_energy",proposal_energy,"current_energy",current_energy,
-#                         "proposal_kinetic_energy",proposal_kinetic_energy,"proposal_potential_energy",proposal_potential_energy)
+                # print("proposed_momentum",proposed_momentum,"current_momentum",current_momentum)
+                # print("proposed_state",proposed_state,"current_state",current_state)
+                # print("current_momentum",np.max(proposed_momentum),"current_momentum",np.max(current_momentum))
+                # print("energy_loss",energy_loss,"proposal_energy",proposal_energy,"current_energy",current_energy,
+                #         "proposal_kinetic_energy",proposal_kinetic_energy,"proposal_potential_energy",proposal_potential_energy)
+                # print("current_kinetic_energy",self.kinetic_energy(current_momentum),"current_potential_energy",self.potential_energy(current_state))
                 
                 _loss_thresh = 1000
                 if abs(energy_loss) >= _loss_thresh:  # this should avoid overflow errors
@@ -1085,6 +1109,7 @@ class HMCSampler(Sampler):
                     else:
                         sign = 1
                     energy_loss = sign * _loss_thresh
+                    print("energy loss")
                 acceptance_probability = np.exp(-energy_loss)
                 
                 acceptance_probability = min(acceptance_probability, 1.0)
@@ -1227,9 +1252,13 @@ def create_hmc_sampler(size,
                        symplectic_integrator='verlet',
                        symplectic_integrator_stepsize=1e-2,
                        symplectic_integrator_num_steps=20,
-                       mass_matrix=(5000,1),
+                    #    mass_matrix=(5000,1),
                        random_seed=1011,
                        constraint_test=None,
+                       mass_matrix_gamma=np.ones(25),
+                       mass_matrix_theta=np.ones(25),
+                       mass_matrix_gamma_scale=1.0,
+                       mass_matrix_theta_scale=1.0,
                        ):
     """
     Given the size of the target space, and a function to evalute log density,
@@ -1238,6 +1267,7 @@ def create_hmc_sampler(size,
 
     This function shows how to create :py:class:`HMCSampler` instances (with some or all configurations passed)
     """
+
     configs = dict(
         size=size,
         log_density=log_density,
@@ -1247,9 +1277,11 @@ def create_hmc_sampler(size,
         symplectic_integrator=symplectic_integrator,
         symplectic_integrator_stepsize=symplectic_integrator_stepsize,
         symplectic_integrator_num_steps=symplectic_integrator_num_steps,
-        mass_matrix=mass_matrix,
+        # mass_matrix=mass_matrix,
         random_seed=random_seed,
         constraint_test=constraint_test,
+        mass_matrix_gamma=mass_matrix_gamma*mass_matrix_gamma_scale,
+        mass_matrix_theta=mass_matrix_theta*mass_matrix_theta_scale,
     )
     return HMCSampler(configs)
 
@@ -1257,5 +1289,3 @@ def create_hmc_sampler(size,
 if __name__ == "__main__":
     # This must exist for multiprocessing to work
     pass
-
-
